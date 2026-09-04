@@ -1,10 +1,16 @@
 # Walkspeed Plugin
 
-A plugin for TesmioLoader (Workers & Resources: Soviet Republic).
+A plugin for TesmioLoader (Workers & Resources: Soviet Republic) that allows you to configure the walking speed and travel times of citizens.
+
+## Features
+* **Walk Speed Scaling**: Globally scale citizen walking speeds (e.g., make them walk 50% faster or slower) while preserving the natural vanilla variance (0.9x to 1.1x).
+* **Travel Timer Dampening**: Optionally dampen the internal state-timers to extend the maximum travel/waiting times, allowing citizens to undertake longer journeys without timing out.
 
 ## Installation
-Copy the compiled `walkspeed.dll` and `walkspeed.ini` to your game directory:
-`Steam\steamapps\common\SovietRepublic\tesmioloader\build\plugins\`
+1. Ensure you have the TesmioLoader framework installed.
+2. Download or compile the plugin, and copy `walkspeed.dll` and `walkspeed.ini` to your game directory:
+   `Steam\steamapps\common\SovietRepublic\tesmioloader\build\plugins\`
+3. Activate the plugin via the `tesmiolauncher.exe` interface.
 
 ## Configuration
-Edit `walkspeed.ini` to adjust the settings.
+Edit `walkspeed.ini` in your plugins folder to adjust the settings. The file contains detailed comments explaining how each multiplier works.
