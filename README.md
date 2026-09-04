@@ -1,5 +1,9 @@
 # Walkspeed Plugin
 
+[![Steam Workshop](https://img.shields.io/badge/Steam-Workshop-blue?logo=steam)](https://steamcommunity.com/sharedfiles/filedetails/?id=3795596452)
+
+**Download from Steam Workshop:** [Walkspeed (ID: 3795596452)](https://steamcommunity.com/sharedfiles/filedetails/?id=3795596452)
+
 A plugin for TesmioLoader (Workers & Resources: Soviet Republic) that allows you to configure the walking speed and travel times of citizens.
 
 ## Features
