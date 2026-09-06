@@ -1,14 +1,16 @@
 [h1]Walkspeed Plugin[/h1]
-A plugin for [b]TesmioLoader[/b] that allows you to configure the walking speed and travel time limits of your citizens.
+A plugin for [b]TesmioLoader[/b] that allows you to configure walking speeds and individual waiting & travel time limits for your citizens.
 
 [h2]Features[/h2]
 [list]
 [*] [b]Walk Speed Scaling[/b]: Globally scale citizen walking speeds (make them walk 50% faster or slower) while preserving the natural vanilla variance (0.9x to 1.1x).
-[*] [b]Extended Waiting & Travel Limits[/b]: Dynamically scale how long citizens can wait at stations (vanilla ~1 hour / 600s) and travel inside vehicles (vanilla ~4-5 hours / 380s) before timing out and returning home. Does NOT affect or shorten working hours!
+[*] [b]Independent Station Waiting Limit[/b]: Configure how long citizens can wait at bus stops and train stations (vanilla ~1 hour / 600s) before giving up and returning home.
+[*] [b]Independent Vehicle Travel Limit[/b]: Configure how long citizens can travel inside vehicles like buses, trains, and cars (vanilla ~4-5 hours / 380s) before timing out and returning home. Does NOT shorten or affect work shifts!
 [/list]
 
 [h2]Changelog v3.0[/h2]
 [list]
+[*] [b]Separated Timeout Limits[/b]: Separate configurable multipliers for station waiting time ([code]station_timeout_multiplier[/code]) and vehicle travel time ([code]vehicle_timeout_multiplier[/code]).
 [*] [b]Shift Duration Fix[/b]: Fixed an issue where scaling timers shortened citizen work shifts. Citizen work shifts now remain at their standard vanilla duration.
 [*] [b]Native Timeout Scaling[/b]: Directly scales the native engine station waiting timeout (600s) and vehicle travel timeout (380s) via RIP-relative memory patching without CPU overhead or floating-point drift.
 [/list]
@@ -23,4 +25,9 @@ A plugin for [b]TesmioLoader[/b] that allows you to configure the walking speed 
 [/list]
 
 [h2]Configuration[/h2]
-Edit [code]walkspeed.ini[/code] in your plugins folder to adjust the multipliers. The file is fully commented in English.
+Edit [code]walkspeed.ini[/code] in your plugins folder to adjust the multipliers:
+[list]
+[*] [code]multiplier[/code]: Citizen walking speed multiplier (default: 1.0)
+[*] [code]station_timeout_multiplier[/code]: Waiting time at stops/stations (default: 1.0)
+[*] [code]vehicle_timeout_multiplier[/code]: Travel time inside vehicles (default: 1.0)
+[/list]

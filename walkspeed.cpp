@@ -37,9 +37,10 @@
 
 // ---------------------------------------------------------------- settings
 
-static int   g_enabled            = 1;
-static float g_mult               = 1.0f;
-static float g_travelTimeoutMult  = 1.0f;
+static int   g_enabled              = 1;
+static float g_mult                 = 1.0f;
+static float g_stationTimeoutMult   = 1.0f;
+static float g_vehicleTimeoutMult   = 1.0f;
 
 // ---------------------------------------------------------------- state
 
@@ -49,7 +50,8 @@ static t_TerrainRender o_TerrainRender = NULL;
 static void*  g_lastWorld = NULL;
 static size_t g_processedCount = 0;
 static float  g_appliedMult = 1.0f;
-static float  g_appliedTimeoutMult = 1.0f;
+static float  g_appliedStationMult = 1.0f;
+static float  g_appliedVehicleMult = 1.0f;
 
 // Pointer to our allocated float constants within 2GB of g_exeBase:
 // [0] = station timeout (vanilla 600.0f)
@@ -68,10 +70,11 @@ static void* GetWorldPtr(void)
 static void UpdateTimeouts(void)
 {
     if (!g_customTimeouts) return;
-    g_customTimeouts[0] = 600.0f * g_travelTimeoutMult;
-    g_customTimeouts[1] = 380.0f * g_travelTimeoutMult;
-    Logf("walkspeed  timeouts updated: station=%.1fs, vehicle=%.1fs (multiplier: %.2fx)",
-         g_customTimeouts[0], g_customTimeouts[1], g_travelTimeoutMult);
+    g_customTimeouts[0] = 600.0f * g_stationTimeoutMult;
+    g_customTimeouts[1] = 380.0f * g_vehicleTimeoutMult;
+    Logf("walkspeed  timeouts updated: station=%.1fs (%.2fx), vehicle=%.1fs (%.2fx)",
+         g_customTimeouts[0], g_stationTimeoutMult,
+         g_customTimeouts[1], g_vehicleTimeoutMult);
 }
 
 // Highly optimized citizen processing
@@ -85,7 +88,9 @@ static void FastProcessCitizens(void)
         return;
     }
 
-    bool settingsChanged = (g_appliedMult != g_mult) || (g_appliedTimeoutMult != g_travelTimeoutMult);
+    bool settingsChanged = (g_appliedMult != g_mult) ||
+                           (g_appliedStationMult != g_stationTimeoutMult) ||
+                           (g_appliedVehicleMult != g_vehicleTimeoutMult);
     bool isNewWorld = (currentWorld != g_lastWorld) || settingsChanged;
     float oldMult = g_appliedMult;
 
@@ -96,9 +101,10 @@ static void FastProcessCitizens(void)
         g_appliedMult = g_mult;
     }
 
-    if (g_appliedTimeoutMult != g_travelTimeoutMult)
+    if (g_appliedStationMult != g_stationTimeoutMult || g_appliedVehicleMult != g_vehicleTimeoutMult)
     {
-        g_appliedTimeoutMult = g_travelTimeoutMult;
+        g_appliedStationMult = g_stationTimeoutMult;
+        g_appliedVehicleMult = g_vehicleTimeoutMult;
         UpdateTimeouts();
     }
 
@@ -189,8 +195,8 @@ static bool ApplyTimeoutPatches(void)
     }
 
     g_customTimeouts = (float*)mem;
-    g_customTimeouts[0] = 600.0f * g_travelTimeoutMult;
-    g_customTimeouts[1] = 380.0f * g_travelTimeoutMult;
+    g_customTimeouts[0] = 600.0f * g_stationTimeoutMult;
+    g_customTimeouts[1] = 380.0f * g_vehicleTimeoutMult;
 
     // 1. Station wait timeout patch at RVA 0x832F1B
     // Expected: F3 0F 10 3D 79 80 0D 00 (movss xmm7, [rip + 0xd8079])
@@ -238,8 +244,8 @@ static bool ApplyTimeoutPatches(void)
     }
 
     FlushInstructionCache(GetCurrentProcess(), siteStation, 0x1500);
-    Logf("walkspeed  timeout limits successfully hooked (station: %.1fs, vehicle: %.1fs, mult: %.2fx)",
-         g_customTimeouts[0], g_customTimeouts[1], g_travelTimeoutMult);
+    Logf("walkspeed  timeout limits successfully hooked (station: %.1fs [%.2fx], vehicle: %.1fs [%.2fx])",
+         g_customTimeouts[0], g_stationTimeoutMult, g_customTimeouts[1], g_vehicleTimeoutMult);
     return true;
 }
 
@@ -280,19 +286,48 @@ static void ReadSettings(void)
         }
     }
 
-    if (H->configString(ini, "walkspeed", "travel_timeout_multiplier", buf, sizeof(buf), "") && buf[0])
+    // Specific station waiting timeout multiplier
+    if (H->configString(ini, "walkspeed", "station_timeout_multiplier", buf, sizeof(buf), "") && buf[0])
     {
         float val = (float)atof(buf);
         if (val >= 0.5f && val <= 50.0f)
         {
-            g_travelTimeoutMult = val;
+            g_stationTimeoutMult = val;
         }
         else
         {
-            Logf("walkspeed  travel_timeout_multiplier %.2f out of bounds, clamped", val);
-            if (val < 0.5f) g_travelTimeoutMult = 0.5f;
-            if (val > 50.0f) g_travelTimeoutMult = 50.0f;
+            Logf("walkspeed  station_timeout_multiplier %.2f out of bounds, clamped", val);
+            if (val < 0.5f) g_stationTimeoutMult = 0.5f;
+            if (val > 50.0f) g_stationTimeoutMult = 50.0f;
         }
+    }
+    // Legacy fallback
+    else if (H->configString(ini, "walkspeed", "travel_timeout_multiplier", buf, sizeof(buf), "") && buf[0])
+    {
+        float val = (float)atof(buf);
+        if (val >= 0.5f && val <= 50.0f) g_stationTimeoutMult = val;
+    }
+
+    // Specific vehicle travel timeout multiplier
+    if (H->configString(ini, "walkspeed", "vehicle_timeout_multiplier", buf, sizeof(buf), "") && buf[0])
+    {
+        float val = (float)atof(buf);
+        if (val >= 0.5f && val <= 50.0f)
+        {
+            g_vehicleTimeoutMult = val;
+        }
+        else
+        {
+            Logf("walkspeed  vehicle_timeout_multiplier %.2f out of bounds, clamped", val);
+            if (val < 0.5f) g_vehicleTimeoutMult = 0.5f;
+            if (val > 50.0f) g_vehicleTimeoutMult = 50.0f;
+        }
+    }
+    // Legacy fallback
+    else if (H->configString(ini, "walkspeed", "travel_timeout_multiplier", buf, sizeof(buf), "") && buf[0])
+    {
+        float val = (float)atof(buf);
+        if (val >= 0.5f && val <= 50.0f) g_vehicleTimeoutMult = val;
     }
 
     UpdateTimeouts();
@@ -317,8 +352,8 @@ extern "C" __declspec(dllexport) int TsmPluginInit(const TsmHost* host, TsmPlugi
         return 1;
     }
 
-    Logf("walkspeed  init (speed mult: %.2f, travel timeout mult: %.2f)",
-         g_mult, g_travelTimeoutMult);
+    Logf("walkspeed  init (speed: %.2fx, station timeout: %.2fx, vehicle timeout: %.2fx)",
+         g_mult, g_stationTimeoutMult, g_vehicleTimeoutMult);
     return 0;
 }
 
@@ -337,8 +372,8 @@ extern "C" __declspec(dllexport) int TsmPluginStart(void)
     // 2. Patch station and vehicle timeouts directly in simulation logic
     ApplyTimeoutPatches();
 
-    Logf("walkspeed  active (speed: %.2fx, travel timeout: %.2fx)",
-         g_mult, g_travelTimeoutMult);
+    Logf("walkspeed  active (speed: %.2fx, station timeout: %.2fx, vehicle timeout: %.2fx)",
+         g_mult, g_stationTimeoutMult, g_vehicleTimeoutMult);
     return 0;
 }
 
