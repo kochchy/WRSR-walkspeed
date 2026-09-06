@@ -1,12 +1,19 @@
-// walkspeed - walk speed modification for TesmioLoader.
+// walkspeed - walk speed and travel timeout modification for TesmioLoader.
 //
 // 1. Speed scaling:
 //    - With multiplier == 1.0f, citizens' speed is not changed and remains 100% vanilla (0.9 - 1.1 random at birth).
 //    - When the multiplier changes, the ratio from the old value to the new one is correctly recalculated without breaking vanilla limits.
-// 2. Travel timer (travel timeout):
-//    - Default 1.0x (disabled), so it does not affect the internal state-timer of citizens.
+// 2. Travel & Waiting timeout:
+//    - In vanilla WRSR (SOVIET64.exe v1.1.1.9):
+//        * Station/bus stop waiting timeout is 600.0s (~1 hour), loaded into XMM7 at RVA 0x832F1B.
+//        * Vehicle (bus/train/car) travel timeout is 380.0s (~4-5 hours), checked at RVA 0x8341A1.
+//        * Accumulated waiting/travel time is kept in Person+0x6C.
+//        * (Person+0x70 is the work/shift duration timer - touching it cuts shifts short!)
+//    - We patch the RIP-relative float loads in FUN_140832e90 to point to dynamically scaled limits,
+//      cleanly extending max waiting and travel times without affecting citizen work shifts or CPU performance.
 
 #include "../../src/tesmio_plugin.h"
+#include <stdint.h>
 
 // ---------------------------------------------------------------- constants and addresses
 
@@ -19,8 +26,11 @@
 // Speed multiplier offset inside Person (float, vanilla range 0.9 - 1.1)
 #define OFF_SPEED         0xA4
 
-// State timer for travel/waiting offset inside Person (float)
-#define OFF_STATE_TIMER   0x70
+// In citizen tick FUN_140832e90 (SOVIET64.exe v1.1.1.9):
+// 1. Station wait timeout limit load: movss xmm7, dword ptr [0x14090af9c] (600.0f)
+#define RVA_STATION_TIMEOUT_LOAD 0x832F1B
+// 2. Vehicle travel timeout compare: comiss xmm0, dword ptr [0x14090aea8] (380.0f)
+#define RVA_VEHICLE_TIMEOUT_CMP  0x8341A1
 
 // Terrain render export for per-frame tick
 #define SYM_TERRAIN_RENDER "?Render@C3D_TERRAIN@@QEAAX_NPEAVC3D_CAMERA@@0HH@Z"
@@ -40,7 +50,11 @@ static void*  g_lastWorld = NULL;
 static size_t g_processedCount = 0;
 static float  g_appliedMult = 1.0f;
 static float  g_appliedTimeoutMult = 1.0f;
-static int    g_timerTickCounter = 0;
+
+// Pointer to our allocated float constants within 2GB of g_exeBase:
+// [0] = station timeout (vanilla 600.0f)
+// [1] = vehicle travel timeout (vanilla 380.0f)
+static float* g_customTimeouts = NULL;
 
 // ---------------------------------------------------------------- fast logic
 
@@ -49,6 +63,15 @@ static void* GetWorldPtr(void)
     void** slot = (void**)(g_exeBase + RVA_WORLD_PTR);
     if (!ReadablePtr(slot, sizeof(void*))) return NULL;
     return *slot;
+}
+
+static void UpdateTimeouts(void)
+{
+    if (!g_customTimeouts) return;
+    g_customTimeouts[0] = 600.0f * g_travelTimeoutMult;
+    g_customTimeouts[1] = 380.0f * g_travelTimeoutMult;
+    Logf("walkspeed  timeouts updated: station=%.1fs, vehicle=%.1fs (multiplier: %.2fx)",
+         g_customTimeouts[0], g_customTimeouts[1], g_travelTimeoutMult);
 }
 
 // Highly optimized citizen processing
@@ -71,8 +94,12 @@ static void FastProcessCitizens(void)
         g_lastWorld = currentWorld;
         g_processedCount = 0;
         g_appliedMult = g_mult;
+    }
+
+    if (g_appliedTimeoutMult != g_travelTimeoutMult)
+    {
         g_appliedTimeoutMult = g_travelTimeoutMult;
-        g_timerTickCounter = 0;
+        UpdateTimeouts();
     }
 
     BYTE*** v = (BYTE***)(g_exeBase + RVA_PERSON_VECTOR);
@@ -89,23 +116,11 @@ static void FastProcessCitizens(void)
     size_t startIndex = isNewWorld ? 0 : g_processedCount;
     if (startIndex > count) startIndex = 0;
 
-    // Timer dampening only if explicitly enabled (> 1.01f)
-    bool shouldDampTimers = false;
-    if (g_travelTimeoutMult > 1.01f)
-    {
-        g_timerTickCounter++;
-        if (g_timerTickCounter >= 60)
-        {
-            g_timerTickCounter = 0;
-            shouldDampTimers = true;
-        }
-    }
-
-    // If there is nothing to do and speed is vanilla (1.0f), return
+    // If speed is vanilla (1.0f) and not resetting, nothing to do
     bool needSpeedUpdate = (isNewWorld && (oldMult != g_mult || g_mult != 1.0f)) ||
                            (!isNewWorld && g_mult != 1.0f && startIndex < count);
 
-    if (!needSpeedUpdate && !shouldDampTimers)
+    if (!needSpeedUpdate)
     {
         g_processedCount = count;
         return;
@@ -113,78 +128,119 @@ static void FastProcessCitizens(void)
 
     __try
     {
-        // 1. Citizen speed processing
-        if (needSpeedUpdate && startIndex < count)
+        // Citizen speed processing (OFF_SPEED = 0xA4)
+        for (size_t i = startIndex; i < count; i++)
         {
-            for (size_t i = startIndex; i < count; i++)
+            BYTE* person = begin[i];
+            if (!person) continue;
+
+            float* pSpeed = (float*)(person + OFF_SPEED);
+            float cur = *pSpeed;
+
+            if (cur >= 0.1f && cur <= 50.0f)
             {
-                BYTE* person = begin[i];
-                if (!person) continue;
-
-                float* pSpeed = (float*)(person + OFF_SPEED);
-                float cur = *pSpeed;
-
-                if (cur >= 0.1f && cur <= 50.0f)
+                float base = cur;
+                if (isNewWorld && oldMult > 0.01f && oldMult != 1.0f)
                 {
-                    float base = cur;
-                    if (isNewWorld && oldMult > 0.01f && oldMult != 1.0f)
+                    base = cur / oldMult;
+                }
+                else if (isNewWorld && oldMult == 1.0f && g_mult != 1.0f)
+                {
+                    // If loading a save and the value is already significantly higher than vanilla (0.9-1.1), it might have been modified earlier
+                    if (cur > 1.3f || cur < 0.7f)
                     {
-                        base = cur / oldMult;
-                    }
-                    else if (isNewWorld && oldMult == 1.0f && g_mult != 1.0f)
-                    {
-                        // If loading a save and the value is already significantly higher than vanilla (0.9-1.1), it might have been modified earlier
-                        if (cur > 1.3f || cur < 0.7f)
-                        {
-                            base = cur / g_mult;
-                        }
-                    }
-
-                    // Safety bounds for vanilla base (vanilla is ~0.9 to 1.1)
-                    if (base < 0.5f || base > 1.5f) base = 1.0f;
-
-                    if (g_mult == 1.0f)
-                    {
-                        *pSpeed = base;
-                    }
-                    else
-                    {
-                        *pSpeed = base * g_mult;
+                        base = cur / g_mult;
                     }
                 }
-            }
-            g_processedCount = count;
-        }
-        else if (startIndex < count)
-        {
-            g_processedCount = count;
-        }
 
-        // 2. Periodic travel timer dampening (only 1x per 60 frames, if enabled)
-        if (shouldDampTimers)
-        {
-            float damp = (g_travelTimeoutMult - 1.0f) / g_travelTimeoutMult;
-            float scale = 1.0f - (damp * 0.5f);
-            if (scale < 0.3f) scale = 0.3f;
+                // Safety bounds for vanilla base (vanilla is ~0.9 to 1.1)
+                if (base < 0.5f || base > 1.5f) base = 1.0f;
 
-            for (size_t i = 0; i < count; i++)
-            {
-                BYTE* person = begin[i];
-                if (!person) continue;
-
-                float* pTimer = (float*)(person + OFF_STATE_TIMER);
-                float t = *pTimer;
-                if (t > 2.0f && t < 10000.0f)
+                if (g_mult == 1.0f)
                 {
-                    *pTimer = t * scale;
+                    *pSpeed = base;
+                }
+                else
+                {
+                    *pSpeed = base * g_mult;
                 }
             }
         }
+        g_processedCount = count;
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
         // Safely catch memory errors
     }
+}
+
+// ---------------------------------------------------------------- timeout patches
+
+static bool ApplyTimeoutPatches(void)
+{
+    BYTE* base = (BYTE*)g_exeBase;
+
+    // Allocate 64 bytes near FUN_140832e90 for our custom float constants
+    BYTE* mem = AllocNear(base + RVA_STATION_TIMEOUT_LOAD, 64);
+    if (!mem)
+    {
+        Logf("walkspeed  failed to allocate memory near exe for timeout constants");
+        return false;
+    }
+
+    g_customTimeouts = (float*)mem;
+    g_customTimeouts[0] = 600.0f * g_travelTimeoutMult;
+    g_customTimeouts[1] = 380.0f * g_travelTimeoutMult;
+
+    // 1. Station wait timeout patch at RVA 0x832F1B
+    // Expected: F3 0F 10 3D 79 80 0D 00 (movss xmm7, [rip + 0xd8079])
+    BYTE* siteStation = base + RVA_STATION_TIMEOUT_LOAD;
+    static const BYTE kExpectStation[4] = { 0xF3, 0x0F, 0x10, 0x3D };
+    if (memcmp(siteStation, kExpectStation, sizeof(kExpectStation)) != 0)
+    {
+        Logf("walkspeed  station timeout instruction mismatch, skipping patch");
+        return false;
+    }
+
+    int32_t dispStation = (int32_t)((BYTE*)&g_customTimeouts[0] - (siteStation + 8));
+    DWORD oldProt;
+    if (VirtualProtect(siteStation, 8, PAGE_EXECUTE_READWRITE, &oldProt))
+    {
+        *(int32_t*)(siteStation + 4) = dispStation;
+        VirtualProtect(siteStation, 8, oldProt, &oldProt);
+    }
+    else
+    {
+        Logf("walkspeed  VirtualProtect failed on station timeout site");
+        return false;
+    }
+
+    // 2. Vehicle travel timeout patch at RVA 0x8341A1
+    // Expected: 0F 2F 05 00 6D 0D 00 (comiss xmm0, [rip + 0xd6d00])
+    BYTE* siteVehicle = base + RVA_VEHICLE_TIMEOUT_CMP;
+    static const BYTE kExpectVehicle[3] = { 0x0F, 0x2F, 0x05 };
+    if (memcmp(siteVehicle, kExpectVehicle, sizeof(kExpectVehicle)) != 0)
+    {
+        Logf("walkspeed  vehicle timeout instruction mismatch, skipping patch");
+        return false;
+    }
+
+    int32_t dispVehicle = (int32_t)((BYTE*)&g_customTimeouts[1] - (siteVehicle + 7));
+    if (VirtualProtect(siteVehicle, 7, PAGE_EXECUTE_READWRITE, &oldProt))
+    {
+        *(int32_t*)(siteVehicle + 3) = dispVehicle;
+        VirtualProtect(siteVehicle, 7, oldProt, &oldProt);
+    }
+    else
+    {
+        Logf("walkspeed  VirtualProtect failed on vehicle timeout site");
+        return false;
+    }
+
+    FlushInstructionCache(GetCurrentProcess(), siteStation, 0x1500);
+    Logf("walkspeed  timeout limits successfully hooked (station: %.1fs, vehicle: %.1fs, mult: %.2fx)",
+         g_customTimeouts[0], g_customTimeouts[1], g_travelTimeoutMult);
+    return true;
 }
 
 static void HookTerrainRender(void* self, bool a, void* b, void* c, int d, int e)
@@ -238,6 +294,8 @@ static void ReadSettings(void)
             if (val > 50.0f) g_travelTimeoutMult = 50.0f;
         }
     }
+
+    UpdateTimeouts();
 }
 
 extern "C" __declspec(dllexport) unsigned TsmPluginApiVersion(void)
@@ -249,7 +307,7 @@ extern "C" __declspec(dllexport) int TsmPluginInit(const TsmHost* host, TsmPlugi
 {
     TsmBind(host);
     info->name    = "walkspeed";
-    info->version = "2.3";
+    info->version = "3.0";
 
     ReadSettings();
 
@@ -268,12 +326,16 @@ extern "C" __declspec(dllexport) int TsmPluginStart(void)
 {
     if (!g_enabled) return 1;
 
+    // 1. Hook terrain render to maintain citizen walking speeds
     if (!PatchIat(g_exe, DLL_ENGINE, SYM_TERRAIN_RENDER,
                   (void*)HookTerrainRender, (void**)&o_TerrainRender, "terrain render"))
     {
         Logf("walkspeed  failed to hook terrain render");
         return 1;
     }
+
+    // 2. Patch station and vehicle timeouts directly in simulation logic
+    ApplyTimeoutPatches();
 
     Logf("walkspeed  active (speed: %.2fx, travel timeout: %.2fx)",
          g_mult, g_travelTimeoutMult);
