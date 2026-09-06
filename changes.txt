@@ -1,0 +1,6 @@
+[v3.0.0]
+- Independent Station Waiting Limit: Added 'station_timeout_multiplier' in walkspeed.ini to configure how long citizens wait at bus stops and stations (vanilla: 600s / ~1 hour).
+- Independent Vehicle Travel Limit: Added 'vehicle_timeout_multiplier' in walkspeed.ini to configure maximum travel time inside vehicles like buses, trains, and cars (vanilla: 380s / ~4-5 hours).
+- Work Shift Duration Fixed: Fixed an issue where scaling timers shortened citizen work shifts. Working hours now remain 100% vanilla and unaffected.
+- High-Performance Native Hook: Directly patches engine timeout comparison limits via RIP-relative memory allocation, zero CPU overhead.
+- Backward Compatibility: Existing configurations with 'travel_timeout_multiplier' remain fully functional and apply to both waiting and vehicle timers.
