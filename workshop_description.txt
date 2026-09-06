@@ -4,14 +4,20 @@ A plugin for [b]TesmioLoader[/b] that allows you to configure the walking speed 
 [h2]Features[/h2]
 [list]
 [*] [b]Walk Speed Scaling[/b]: Globally scale citizen walking speeds (make them walk 50% faster or slower) while preserving the natural vanilla variance (0.9x to 1.1x).
-[*] [b]Travel Timer Dampening[/b]: Optionally dampen the internal state-timers to extend the maximum travel/waiting times, allowing citizens to undertake longer journeys without timing out and teleporting home.
+[*] [b]Extended Waiting & Travel Limits[/b]: Dynamically scale how long citizens can wait at stations (vanilla ~1 hour / 600s) and travel inside vehicles (vanilla ~4-5 hours / 380s) before timing out and returning home. Does NOT affect or shorten working hours!
+[/list]
+
+[h2]Changelog v3.0[/h2]
+[list]
+[*] [b]Shift Duration Fix[/b]: Fixed an issue where scaling timers shortened citizen work shifts. Citizen work shifts now remain at their standard vanilla duration.
+[*] [b]Native Timeout Scaling[/b]: Directly scales the native engine station waiting timeout (600s) and vehicle travel timeout (380s) via RIP-relative memory patching without CPU overhead or floating-point drift.
 [/list]
 
 [h2]Installation[/h2]
 [b]Important:[/b] This mod requires [url=https://github.com/Tesmio/TesmioLoader]TesmioLoader[/url] to work! Subscribing to this workshop item will download the files to your workshop folder, but you must manually install the plugin.
 [list=1]
 [*] Ensure you have the TesmioLoader framework installed.
-[*] Locate the downloaded files in your Steam workshop directory (usually [code]Steam\steamapps\workshop\content\784150\...\)[/code]
+[*] Locate the downloaded files in your Steam workshop directory (usually [code]Steam\steamapps\workshop\content\784150\3795596452\plugins[/code]).
 [*] Copy [code]walkspeed.dll[/code] and [code]walkspeed.ini[/code] to your game directory: [code]Steam\steamapps\common\SovietRepublic\tesmioloader\build\plugins\[/code]
 [*] Activate the plugin via the [code]tesmiolauncher.exe[/code] interface.
 [/list]
